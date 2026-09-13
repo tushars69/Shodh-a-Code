@@ -4,7 +4,7 @@ import time
 from groq import Groq
 from tools import TOOL_REGISTRY, TOOL_SCHEMAS
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "openai/gpt-oss-120b"
 MAX_TOOL_CALLS = int(os.environ.get("AI_MAX_TOOL_CALLS", "6"))
 TIMEOUT_SECONDS = int(os.environ.get("AI_TIMEOUT_SECONDS", "20"))
 
@@ -51,8 +51,14 @@ def ask(question: str, requester_role: str, requester_user_id: str, org_id: str)
 
     client = Groq(api_key=api_key)
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"[requester_role={requester_role} org_id={org_id}] {question}"},
+    {"role": "system", "content": SYSTEM_PROMPT},
+    {
+        "role": "user",
+        "content": (
+            f"[requester_role={requester_role} requester_user_id={requester_user_id} org_id={org_id}] "
+            f"{question}"
+        ),
+    },
     ]
     evidence_log = []
 
@@ -69,7 +75,17 @@ def ask(question: str, requester_role: str, requester_user_id: str, org_id: str)
             timeout=max(1, TIMEOUT_SECONDS - (time.time() - started)),
         )
         choice = resp.choices[0]
-        messages.append(choice.message.model_dump())
+        assistant_msg = {"role": "assistant", "content": choice.message.content}
+        if choice.message.tool_calls:
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in choice.message.tool_calls
+            ]
+        messages.append(assistant_msg)
 
         if not choice.message.tool_calls:
             return {
@@ -85,7 +101,7 @@ def ask(question: str, requester_role: str, requester_user_id: str, org_id: str)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps(result)[:6000],
+                "content": json.dumps(result, default=str)[:6000],
             })
 
     # Iteration budget exhausted -- force a final grounded answer from whatever
