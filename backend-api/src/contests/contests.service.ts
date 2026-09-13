@@ -31,7 +31,7 @@ export class ContestsService {
       [contestId],
     );
     const problems = problemsRes.rows;
-    const out = [];
+    const out: any[] = [];
     for (const p of problems) {
       if (p.is_hidden_from_learners_until && new Date(p.is_hidden_from_learners_until) > new Date()) {
         if (requesterRole !== 'instructor' && requesterRole !== 'admin') continue;

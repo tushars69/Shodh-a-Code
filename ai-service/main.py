@@ -2,10 +2,16 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from agent import ask, AiUnavailableError
 from retrieval import compare_retrieval
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Shodh-a-Code AI Service")
 
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class AskRequest(BaseModel):
     question: str
     requester_role: str  # 'learner' | 'instructor' | 'admin'
