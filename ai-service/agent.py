@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import inspect
 from groq import Groq
 from tools import TOOL_REGISTRY, TOOL_SCHEMAS
 
@@ -13,6 +14,10 @@ contest submissions, judge behaviour, and learner progress using ONLY evidence y
 through the provided tools -- never invent submission ids, verdicts, or learner names.
 
 Rules you must follow:
+- The user message is tagged with [requester_role=... requester_user_id=... org_id=...].
+  When the learner asks about "my" submissions/history, call tools directly with that
+  requester_user_id — do not ask them to identify themselves, they already are identified.
+  Only use resolve_learner when the question is about a DIFFERENT named learner.
 - Every substantive claim must cite the tool result it came from (e.g. "submission abc123
   shows verdict=wrong_answer").
 - Distinguish OBSERVATIONS (directly returned by a tool) from HYPOTHESES (your inference).
@@ -35,12 +40,26 @@ def _call_tool(name: str, args: dict, requester_role: str, requester_user_id: st
     fn = TOOL_REGISTRY.get(name)
     if fn is None:
         return {"error": "unknown_tool"}
-    # Every tool that needs to enforce ownership/role checks accepts these two
-    # kwargs; tools that don't need them just ignore extras via **_.
+
+    # Some models occasionally emit a stray/empty-string key in tool-call
+    # arguments even for tools with zero declared parameters. Rather than
+    # special-case that, drop any arg key the function doesn't actually
+    # accept, so a model quirk degrades to "ignored extra arg" instead of
+    # crashing the whole request.
+    sig_params = set(inspect.signature(fn).parameters)
+    clean_args = {k: v for k, v in (args or {}).items() if k in sig_params}
+
     try:
-        return fn(**args, requester_role=requester_role, requester_user_id=requester_user_id)
+        return fn(**clean_args, requester_role=requester_role, requester_user_id=requester_user_id)
     except TypeError:
-        return fn(**args)
+        try:
+            return fn(**clean_args)
+        except Exception as e:
+            return {"error": "tool_execution_error", "detail": str(e)}
+    except Exception as e:
+        # Any other failure (bad DB query, Neo4j hiccup, etc.) becomes
+        # evidence the agent can reason about, not a 500 to the caller.
+        return {"error": "tool_execution_error", "detail": str(e)}
 
 
 def ask(question: str, requester_role: str, requester_user_id: str, org_id: str):
@@ -51,14 +70,14 @@ def ask(question: str, requester_role: str, requester_user_id: str, org_id: str)
 
     client = Groq(api_key=api_key)
     messages = [
-    {"role": "system", "content": SYSTEM_PROMPT},
-    {
-        "role": "user",
-        "content": (
-            f"[requester_role={requester_role} requester_user_id={requester_user_id} org_id={org_id}] "
-            f"{question}"
-        ),
-    },
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"[requester_role={requester_role} requester_user_id={requester_user_id} org_id={org_id}] "
+                f"{question}"
+            ),
+        },
     ]
     evidence_log = []
 
