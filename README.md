@@ -5,13 +5,11 @@ services, submitted as one repo per the assignment's instructions.
 
 ## Quick start
 
-```bash
 git clone <this repo>
 cd shodh-a-code
 docker compose up --build
 # in a second terminal, once postgres/neo4j report healthy:
 docker compose run --rm seed
-```
 
 Then open http://localhost:3000, join with **Contest ID** printed by the seed
 script and username `tushar_singh` (or `priya_k`, `dev_r`, etc — see seed
@@ -20,24 +18,28 @@ output). Backend API: `:4000`. AI service: `:8000`. Neo4j browser: `:7474`.
 Run the scripted evaluation (normal flow + recovery + access check + AI
 questions) with:
 
-```bash
 ./scripts/smoke_test.sh
-```
 
 ## Architecture
 
-```
-frontend (Next.js)  →  backend-api (NestJS)  →  Postgres (source of truth)
-                              │                        ▲
-                              │ enqueue                 │ read authoritative state
-                              ▼                        │
-                        Redis queue  →  judge-worker (Python, Docker-in-Docker sandbox)
-                                                          │
-                        backend-api  ←────────── verdict (internal endpoint)
+Contest flow:
+  frontend (Next.js)
+      → backend-api (NestJS)
+          → Postgres (source of truth)
+          → enqueues job on Redis
+  judge-worker (Python, Docker-in-Docker sandbox)
+      → pulls job from Redis
+      → reads submission + problem from backend-api (internal endpoints)
+      → executes code in an isolated container
+      → posts verdict back to backend-api (internal endpoint)
 
-frontend  →  ai-service (FastAPI)  →  Postgres (facts) + Neo4j (relationships) + Chroma (semantic recall)
-                                    →  Groq (Llama 3.3 70B) for the agentic reasoning loop
-```
+AI flow:
+  frontend (Next.js)
+      → ai-service (FastAPI)
+          → Postgres (facts: submissions, verdicts, judge incidents)
+          → Neo4j (relationships: problem/concept/learner graph)
+          → Chroma (semantic recall: learning material)
+          → Groq (openai/gpt-oss-120b) for the agentic tool-use loop
 
 **Why this split:** NestJS owns the contest domain (identity, org/role
 scoping, submission lifecycle) because that's where strict typing and
@@ -73,7 +75,7 @@ copies of the same data):**
 - **Multi-hop GraphRAG**: `graph_multi_hop` walks 1–3 hops in Neo4j from a
   problem or concept node.
 - **Agentic tool use**: `ai-service/agent.py` is a bounded ReAct-style loop
-  against Groq (`llama-3.3-70b-versatile`) — up to `AI_MAX_TOOL_CALLS` (6)
+  against Groq (`openai/gpt-oss-120b`) — up to `AI_MAX_TOOL_CALLS` (6)
   tool calls and a wall-clock timeout (`AI_TIMEOUT_SECONDS`, 20s), after which
   it's forced to answer from whatever evidence it already gathered rather
   than looping or hanging a request.
@@ -119,6 +121,19 @@ copies of the same data):**
   the AI evidence log are the "basic timing/diagnostic" bar the spec asks for.
 - Test suite is the focused set the spec asks for (normal flow, recovery,
   access check, a handful of AI Q&A), not a comprehensive benchmark.
+- On SELinux-enforcing hosts (Fedora/RHEL), the judge-worker needs
+  `security_opt: label=disable` to reach the mounted Docker socket — a
+  `connectto` AVC denial otherwise blocks sibling-container creation even
+  with correct file permissions. Already set in `docker-compose.yml`.
+- `docker-py`'s `containers.create()` does not auto-pull images the way the
+  `docker` CLI does. The judge-worker now pulls `python:3.11-alpine` /
+  `node:20-alpine` on first use if missing, but the very first submission
+  after a fresh `docker compose up` will be slower while that pull happens.
+  Pre-pull both images manually to skip that one-time delay.
+- The AI service uses `openai/gpt-oss-120b` on Groq rather than a Llama
+  model — `llama-3.3-70b-versatile` was removed from Groq's catalog during
+  development. If this happens again, check `GET /v1/models` against your
+  own key and update `MODEL` in `ai-service/agent.py`.
 
 ## AI-assisted development
 
