@@ -1,0 +1,139 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shodh
+      POSTGRES_PASSWORD: shodh
+      POSTGRES_DB: shodh_a_code
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shodh"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/shodhpass123
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8010:8000"
+    volumes:
+      - chromadata:/chroma/chroma
+
+  backend-api:
+    build: ./backend-api
+    environment:
+      DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh_a_code
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: dev-secret-change-me
+      PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  judge-worker:
+    build: ./judge-worker
+    environment:
+      DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh_a_code
+      REDIS_URL: redis://redis:6379
+      BACKEND_API_URL: http://backend-api:4000
+      JUDGE_INTERNAL_TOKEN: dev-internal-token
+      JUDGE_IMAGE_VERSION: judge-v1.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - judge_tmp:/tmp/judge
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend-api:
+        condition: service_started
+
+  ai-service:
+    build: ./ai-service
+    environment:
+      DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh_a_code
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: shodhpass123
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      BACKEND_API_URL: http://backend-api:4000
+      AI_MAX_TOOL_CALLS: "6"
+      AI_TIMEOUT_SECONDS: "20"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_AI_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend-api
+      - ai-service
+
+  seed:
+    build: ./ai-service
+    command: ["python", "seed.py"]
+    environment:
+      DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh_a_code
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: shodhpass123
+      CHROMA_HOST: chroma
+      CHROMA_PORT: "8000"
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  neo4jdata:
+  chromadata:
+  judge_tmp:
