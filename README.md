@@ -130,10 +130,6 @@ copies of the same data):**
   `node:20-alpine` on first use if missing, but the very first submission
   after a fresh `docker compose up` will be slower while that pull happens.
   Pre-pull both images manually to skip that one-time delay.
-- The AI service uses `openai/gpt-oss-120b` on Groq rather than a Llama
-  model — `llama-3.3-70b-versatile` was removed from Groq's catalog during
-  development. If this happens again, check `GET /v1/models` against your
-  own key and update `MODEL` in `ai-service/agent.py`.
 
 ## AI-assisted development
 
@@ -145,9 +141,3 @@ was traced manually against the failure modes in the spec; the AI-service
 tool contracts were designed first (as the access boundary), with the agent
 loop built around them rather than the reverse. `docs/EVALUATION.md` records
 expected vs. actual behavior for the test cases actually run.
-
-## Time spent
-
-Single overnight session. Roughly: schema + backend-api (~2h), judge-worker
-sandbox (~1.5h), ai-service + agent loop (~2h), frontend (~1h), seed data +
-docs/tests (~1h).
