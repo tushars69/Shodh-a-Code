@@ -52,6 +52,12 @@ def _tar_with_files(files: dict) -> io.BytesIO:
     buf.seek(0)
     return buf
 
+def _ensure_image(client, image: str):
+    try:
+        client.images.get(image)
+    except docker.errors.ImageNotFound:
+        client.images.pull(image)
+
 
 def run_submission(language: str, source_code: str, stdin_input: str, time_limit_ms: int, memory_limit_mb: int):
     """Returns dict: {stdout, exit_code, timed_out, runtime_ms}. Raises InfraError on sandbox failure."""
@@ -61,6 +67,11 @@ def run_submission(language: str, source_code: str, stdin_input: str, time_limit
     client = docker.from_env()
     image = LANGUAGE_IMAGES[language]
     filename = SOURCE_FILENAME[language]
+
+    try:
+        _ensure_image(client, image)
+    except APIError as e:
+        raise InfraError(f"Could not pull sandbox image {image}: {e}")
 
     container = None
     started = time.time()

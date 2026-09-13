@@ -69,6 +69,8 @@ services:
 
   judge-worker:
     build: ./judge-worker
+    security_opt:
+    - label=disable
     environment:
       DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh_a_code
       REDIS_URL: redis://redis:6379

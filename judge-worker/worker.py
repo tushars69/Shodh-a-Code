@@ -67,6 +67,9 @@ def judge_one(submission_id: str, problem_id: str, language: str, source_code: s
         except InfraError as e:
             # A sandbox/infra failure is NOT a verdict — the whole submission
             # is reported as infra_error so it never counts against the learner.
+            # THIS PRINT IS THE FIX: previously this path returned silently,
+            # which is exactly why every log check came back empty.
+            print(f"[worker] InfraError on submission {submission_id}, test case {tc['id']}: {e}")
             return {
                 "status": "infra_error",
                 "verdict": "pending",
@@ -115,10 +118,14 @@ def judge_one(submission_id: str, problem_id: str, language: str, source_code: s
 def handle_job(submission_id: str):
     submission = fetch_submission(submission_id)
     if submission is None:
+        print(f"[worker] submission {submission_id} not found, skipping")
         return  # nothing to do — submission was removed/never existed
 
     if submission["status"] in ("completed", "infra_error"):
+        print(f"[worker] submission {submission_id} already judged, skipping")
         return  # already judged; duplicate delivery from the queue is a no-op
+
+    print(f"[worker] judging submission {submission_id} (problem={submission['problem_id']}, lang={submission['language']})")
 
     attempt = 0
     while attempt < MAX_RETRIES:
@@ -130,6 +137,7 @@ def handle_job(submission_id: str):
                 submission["source_code"],
             )
             post_verdict(submission_id, payload)
+            print(f"[worker] submission {submission_id} -> status={payload['status']} verdict={payload.get('verdict')}")
             return
         except Exception as e:
             attempt += 1
@@ -162,6 +170,7 @@ def main():
         _, raw = item
         try:
             job = json.loads(raw)
+            print(f"[worker] picked up job: {job}")
             handle_job(job["submissionId"])
         except Exception:
             print("[worker] failed to process job:", raw)
